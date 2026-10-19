@@ -1,0 +1,195 @@
+import 'package:flutter/material.dart';
+
+void main() {
+  runApp(const EVStationLocatorApp());
+}
+
+class EVStationLocatorApp extends StatelessWidget {
+  const EVStationLocatorApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'EV Station Locator',
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData(
+        useMaterial3: true,
+        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF1BAA6B)),
+        scaffoldBackgroundColor: const Color(0xFFF4F8F7),
+      ),
+      home: const DashboardScreen(),
+    );
+  }
+}
+
+class DashboardScreen extends StatelessWidget {
+  const DashboardScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final stations = [
+      _StationCard('ChargeZone Gachibowli', 'ChargeZone', '3.8 km', '60 kW', '₹16/kWh', '3 chargers available', true),
+      _StationCard('Tata Power Kondapur', 'Tata Power', '4.6 km', '50 kW', '₹17/kWh', '2 chargers available', true),
+      _StationCard('Zeon Banjara Hills', 'Zeon', '6.1 km', '80 kW', '₹18.5/kWh', 'Maintenance', false),
+    ];
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('EV Station Locator'),
+        actions: [IconButton(onPressed: () {}, icon: const Icon(Icons.notifications_outlined))],
+      ),
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Good afternoon, Syed', style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              const Text('Ready for your next trip?', style: TextStyle(fontSize: 16, color: Colors.black54)),
+              const SizedBox(height: 20),
+              Row(
+                children: const [
+                  _StatChip('Nearby', '12'),
+                  SizedBox(width: 12),
+                  _StatChip('Available', '27'),
+                  SizedBox(width: 12),
+                  _StatChip('Fast', '14'),
+                ],
+              ),
+              const SizedBox(height: 24),
+              Container(
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(20),
+                  boxShadow: [BoxShadow(color: Colors.black.withAlpha(15), blurRadius: 10)],
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: const [
+                        Icon(Icons.electric_car, color: Color(0xFF1BAA6B)),
+                        SizedBox(width: 8),
+                        Text('Recommended Station', style: TextStyle(fontWeight: FontWeight.w700)),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    const Text('ChargeZone', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 4),
+                    const Text('Gachibowli • 3.8 km away'),
+                    const SizedBox(height: 8),
+                    const Text('60 kW • CCS2 • ₹16/kWh'),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        ElevatedButton.icon(onPressed: () {}, icon: const Icon(Icons.calendar_month), label: const Text('Reserve')),
+                        const SizedBox(width: 12),
+                        OutlinedButton.icon(onPressed: () {}, icon: const Icon(Icons.navigation_outlined), label: const Text('Navigate')),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 24),
+              const Text('Nearby Stations', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 12),
+              ...stations,
+            ],
+          ),
+        ),
+      ),
+      bottomNavigationBar: NavigationBar(
+        destinations: const [
+          NavigationDestination(icon: Icon(Icons.home_outlined), selectedIcon: Icon(Icons.home), label: 'Home'),
+          NavigationDestination(icon: Icon(Icons.map_outlined), selectedIcon: Icon(Icons.map), label: 'Stations'),
+          NavigationDestination(icon: Icon(Icons.route_outlined), selectedIcon: Icon(Icons.route), label: 'Trip'),
+          NavigationDestination(icon: Icon(Icons.event_available_outlined), selectedIcon: Icon(Icons.event_available), label: 'Reservations'),
+          NavigationDestination(icon: Icon(Icons.person_outline), selectedIcon: Icon(Icons.person), label: 'Profile'),
+        ],
+      ),
+    );
+  }
+}
+
+class _StatChip extends StatelessWidget {
+  const _StatChip(this label, this value);
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 16),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Column(
+          children: [
+            Text(label, style: const TextStyle(color: Colors.black54)),
+            const SizedBox(height: 4),
+            Text(value, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _StationCard extends StatelessWidget {
+  const _StationCard(this name, this provider, this distance, this power, this price, this detail, this available);
+
+  final String name;
+  final String provider;
+  final String distance;
+  final String power;
+  final String price;
+  final String detail;
+  final bool available;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 14),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: available ? const Color(0xFFDCFCE7) : const Color(0xFFFEE2E2),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(available ? Icons.ev_station : Icons.warning_amber_rounded, color: available ? const Color(0xFF15803D) : const Color(0xFFB91C1C)),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(name, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+                const SizedBox(height: 4),
+                Text('$provider • $distance', style: const TextStyle(color: Colors.black54)),
+                const SizedBox(height: 8),
+                Text('$power • $price', style: const TextStyle(fontWeight: FontWeight.w600)),
+                const SizedBox(height: 4),
+                Text(detail, style: const TextStyle(color: available ? Colors.green : Colors.red)),
+              ],
+            ),
+          ),
+          IconButton(onPressed: () {}, icon: const Icon(Icons.arrow_forward_ios_rounded)),
+        ],
+      ),
+    );
+  }
+}

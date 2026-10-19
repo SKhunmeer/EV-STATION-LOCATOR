@@ -1,0 +1,36 @@
+version: '3.9'
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: evstation
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  backend:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/evstation
+      SECRET_KEY: dev-secret
+      JWT_SECRET_KEY: dev-secret-jwt
+      CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
+      PORT: 5000
+      OCM_API_KEY: ${OCM_API_KEY:-}
+      OCM_LATITUDE: ${OCM_LATITUDE:-17.4065}
+      OCM_LONGITUDE: ${OCM_LONGITUDE:-78.4772}
+      OCM_RADIUS_KM: ${OCM_RADIUS_KM:-50}
+    depends_on:
+      - db
+    ports:
+      - "5000:5000"
+
+volumes:
+  postgres_data:
