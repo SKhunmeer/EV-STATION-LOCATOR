@@ -1,0 +1,139 @@
+/// IP Geolocation API using ip-api.com.
+library;
+
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:args/args.dart' as args;
+import 'package:xml/xml.dart';
+import 'package:xml/xml_events.dart';
+
+final _httpClient = HttpClient();
+
+final args.ArgParser _argumentParser = args.ArgParser()
+  ..addFlag(
+    'incremental',
+    abbr: 'i',
+    defaultsTo: true,
+    help: 'Incrementally parses and prints the response',
+  )
+  ..addMultiOption(
+    'fields',
+    abbr: 'f',
+    defaultsTo: ['status', 'message', 'query', 'country', 'city'],
+    allowed: [
+      'as',
+      'asname',
+      'city',
+      'continent',
+      'continentCode',
+      'country',
+      'countryCode',
+      'currency',
+      'district',
+      'isp',
+      'lat',
+      'lon',
+      'message',
+      'mobile',
+      'org',
+      'proxy',
+      'query',
+      'region',
+      'regionName',
+      'reverse',
+      'status',
+      'timezone',
+      'zip',
+    ],
+    help: 'Fields to be returned',
+  )
+  ..addOption(
+    'lang',
+    abbr: 'l',
+    defaultsTo: 'en',
+    allowed: ['en', 'de', 'es', 'pt-BR', 'fr', 'ja', 'zh-CN', 'ru'],
+    help: 'Localizes city, region and country names',
+  )
+  ..addFlag(
+    'help',
+    abbr: 'h',
+    defaultsTo: false,
+    help: 'Displays the help text',
+  );
+
+void _printUsage([int exitCode = 0]) {
+  stdout.writeln('Usage: ip_lookup -s [query]');
+  stdout.writeln();
+  stdout.writeln(_argumentParser.usage);
+  exit(exitCode);
+}
+
+Future<void> _lookupIp(args.ArgResults results, [String query = '']) async {
+  final incremental = results['incremental'] as bool;
+  final fields = results['fields'] as List<String>;
+  final lang = results['lang'] as String;
+
+  // Build the query URL, perform the request, and convert response to UTF-8.
+  final url = Uri.parse(
+    'http://ip-api.com/xml/$query?fields=${fields.join(',')}&lang=$lang',
+  );
+  final request = await _httpClient.getUrl(url);
+  final response = await request.close();
+  final stream = response.transform(utf8.decoder);
+
+  // Typically you would only implement one of the following two approaches,
+  // but for demonstration sake we show both in this example:
+  if (incremental) {
+    void textHandler(XmlEvent event, String text) =>
+        stdout.writeln('${event.parent?.name}: $text');
+
+    // Decode the input stream, normalize it, attach parent information,
+    // select the events we are interested in, then print the information.
+    // This approach uses less memory and is emitting results incrementally;
+    // though the implementation is more involved.
+    await stream
+        .toXmlEvents(withParent: true)
+        .normalizeEvents()
+        .selectSubtreeEvents((event) => event.parent?.name == 'query')
+        .forEachEvent(
+          onText: (event) => textHandler(event, event.value),
+          onCDATA: (event) => textHandler(event, event.value),
+        );
+  } else {
+    // Wait until we have the full response body, then parse the input to a
+    // XML DOM tree and extract the information to be printed. This approach
+    // uses more memory and waits for the complete data to be downloaded
+    // and parsed before printing any results; though the implementation is
+    // simpler.
+    final input = await stream.join();
+    final document = XmlDocument.parse(input);
+    for (final element in document.rootElement.childElements) {
+      stdout.writeln('${element.name}: ${element.innerText}');
+    }
+  }
+}
+
+Future<void> main(List<String> arguments) async {
+  final args.ArgResults results;
+  try {
+    results = _argumentParser.parse(arguments);
+  } on FormatException catch (error) {
+    stderr.writeln(error.message);
+    _printUsage(1);
+    return;
+  }
+
+  if (results['help'] as bool) {
+    _printUsage(0);
+  }
+
+  if (results.rest.isEmpty) {
+    await _lookupIp(results);
+  } else {
+    for (final query in results.rest) {
+      await _lookupIp(results, query);
+      stdout.writeln();
+    }
+  }
+}

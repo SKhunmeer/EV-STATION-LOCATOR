@@ -1,0 +1,380 @@
+import 'package:test/test.dart';
+import 'package:xml/src/xpath/evaluation/context.dart';
+import 'package:xml/src/xpath/operators/comparison.dart';
+import 'package:xml/xml.dart';
+import 'package:xml/xpath.dart';
+
+import '../../utils/matchers.dart';
+import '../helpers.dart';
+
+void main() {
+  group('compare', () {
+    test('numbers', () {
+      expect(compare(XPathInteger.fromInt(1), XPathInteger.fromInt(2)), -1);
+      expect(compare(XPathInteger.fromInt(2), XPathInteger.fromInt(2)), 0);
+      expect(compare(XPathInteger.fromInt(2), XPathInteger.fromInt(1)), 1);
+      expect(compare(const XPathDouble(1.0), const XPathDouble(2.0)), -1);
+      expect(compare(XPathInteger.fromInt(1), const XPathDouble(1.0)), 0);
+    });
+    test('strings', () {
+      expect(compare(const XPathString('a'), const XPathString('b')), -1);
+      expect(compare(const XPathString('b'), const XPathString('b')), 0);
+      expect(compare(const XPathString('b'), const XPathString('a')), 1);
+    });
+    test('booleans', () {
+      expect(
+        compare(XPathBoolean.falseInstance, XPathBoolean.trueInstance),
+        -1,
+      );
+      expect(compare(XPathBoolean.trueInstance, XPathBoolean.trueInstance), 0);
+      expect(
+        compare(XPathBoolean.falseInstance, XPathBoolean.falseInstance),
+        0,
+      );
+      expect(compare(XPathBoolean.trueInstance, XPathBoolean.falseInstance), 1);
+    });
+    test('incompatible types throw', () {
+      expect(
+        () => compare(XPathInteger.fromInt(1), const XPathString('2')),
+        throwsA(isXPathEvaluationException()),
+      );
+      expect(
+        () => compare(const XPathString('2'), XPathInteger.fromInt(1)),
+        throwsA(isXPathEvaluationException()),
+      );
+    });
+  });
+
+  final earlier = XPathDateTime.fromDateTime(DateTime.utc(2024, 1, 1));
+  final later = XPathDateTime.fromDateTime(DateTime.utc(2025, 6, 15));
+  const shortDuration = XPathDuration.dayTime(Duration.microsecondsPerHour);
+  const longDuration = XPathDuration.dayTime(2 * Duration.microsecondsPerDay);
+
+  group('opValueLessThan', () {
+    test('DateTime values', () {
+      expect(
+        opValueLessThan(
+          XPathSequence.single(earlier),
+          XPathSequence.single(later),
+        ),
+        isXPathSequence([true]),
+      );
+    });
+    test('Duration values', () {
+      expect(
+        opValueLessThan(
+          const XPathSequence.single(shortDuration),
+          const XPathSequence.single(longDuration),
+        ),
+        isXPathSequence([true]),
+      );
+    });
+    test('bool values', () {
+      expect(
+        opValueLessThan(
+          const XPathSequence.single(XPathBoolean.falseInstance),
+          const XPathSequence.single(XPathBoolean.trueInstance),
+        ),
+        isXPathSequence([true]),
+      );
+    });
+    test('empty sequence returns empty', () {
+      expect(
+        opValueLessThan(
+          XPathSequence.empty,
+          XPathSequence.single(XPathInteger.fromInt(1)),
+        ),
+        isXPathSequence(isEmpty),
+      );
+    });
+  });
+
+  group('opValueGreaterThanOrEqual', () {
+    test('DateTime values', () {
+      expect(
+        opValueGreaterThanOrEqual(
+          XPathSequence.single(earlier),
+          XPathSequence.single(later),
+        ),
+        isXPathSequence([false]),
+      );
+    });
+    test('bool values', () {
+      expect(
+        opValueGreaterThanOrEqual(
+          const XPathSequence.single(XPathBoolean.trueInstance),
+          const XPathSequence.single(XPathBoolean.trueInstance),
+        ),
+        isXPathSequence([true]),
+      );
+    });
+  });
+
+  group('opValueLessThanOrEqual', () {
+    test('DateTime values', () {
+      expect(
+        opValueLessThanOrEqual(
+          XPathSequence.single(earlier),
+          XPathSequence.single(earlier),
+        ),
+        isXPathSequence([true]),
+      );
+    });
+  });
+
+  group('opValueGreaterThan', () {
+    test('Duration values', () {
+      expect(
+        opValueGreaterThan(
+          const XPathSequence.single(shortDuration),
+          const XPathSequence.single(longDuration),
+        ),
+        isXPathSequence([false]),
+      );
+    });
+  });
+
+  group('opValueEqual', () {
+    test('equal numbers', () {
+      expect(
+        opValueEqual(
+          XPathSequence.single(XPathInteger.fromInt(1)),
+          XPathSequence.single(XPathInteger.fromInt(1)),
+        ),
+        isXPathSequence([true]),
+      );
+    });
+    test('not equal numbers', () {
+      expect(
+        opValueEqual(
+          XPathSequence.single(XPathInteger.fromInt(1)),
+          XPathSequence.single(XPathInteger.fromInt(2)),
+        ),
+        isXPathSequence([false]),
+      );
+    });
+    test('atomize node', () {
+      final node = XmlElement(const XmlName('a'), [], [XmlText('foo')]);
+      expect(
+        opValueEqual(
+          XPathSequence.single(XPathNode(node)),
+          const XPathSequence.single(XPathString('foo')),
+        ),
+        isXPathSequence([true]),
+      );
+    });
+    test('empty sequence returns empty', () {
+      expect(
+        opValueEqual(
+          XPathSequence.empty,
+          XPathSequence.single(XPathInteger.fromInt(1)),
+        ),
+        isXPathSequence(isEmpty),
+      );
+    });
+    test('sequence with more than one item throws', () {
+      final multiple = XPathSequence([
+        XPathInteger.fromInt(1),
+        XPathInteger.fromInt(2),
+      ]);
+      final single = XPathSequence.single(XPathInteger.fromInt(1));
+      expect(
+        () => opValueEqual(multiple, single),
+        throwsA(
+          isXPathEvaluationException(
+            message: contains('Sequence contains more than one item'),
+          ),
+        ),
+      );
+    });
+    test('duration values', () {
+      expect(
+        opValueEqual(
+          const XPathSequence.single(shortDuration),
+          const XPathSequence.single(shortDuration),
+        ),
+        isXPathSequence([true]),
+      );
+      expect(
+        opValueEqual(
+          const XPathSequence.single(shortDuration),
+          const XPathSequence.single(longDuration),
+        ),
+        isXPathSequence([false]),
+      );
+    });
+  });
+
+  group('opValueNotEqual', () {
+    test('not equal numbers', () {
+      expect(
+        opValueNotEqual(
+          XPathSequence.single(XPathInteger.fromInt(1)),
+          XPathSequence.single(XPathInteger.fromInt(2)),
+        ),
+        isXPathSequence([true]),
+      );
+    });
+    test('equal numbers', () {
+      expect(
+        opValueNotEqual(
+          XPathSequence.single(XPathInteger.fromInt(1)),
+          XPathSequence.single(XPathInteger.fromInt(1)),
+        ),
+        isXPathSequence([false]),
+      );
+    });
+    test('empty sequence returns empty', () {
+      expect(
+        opValueNotEqual(
+          XPathSequence.empty,
+          XPathSequence.single(XPathInteger.fromInt(1)),
+        ),
+        isXPathSequence(isEmpty),
+      );
+    });
+    test('duration values', () {
+      expect(
+        opValueNotEqual(
+          const XPathSequence.single(shortDuration),
+          const XPathSequence.single(longDuration),
+        ),
+        isXPathSequence([true]),
+      );
+      expect(
+        opValueNotEqual(
+          const XPathSequence.single(shortDuration),
+          const XPathSequence.single(shortDuration),
+        ),
+        isXPathSequence([false]),
+      );
+    });
+  });
+
+  group('atomization of maps, arrays, and functions', () {
+    test('atomize array', () {
+      expect(
+        opValueEqual(
+          XPathSequence.single(
+            XPathArray([XPathSequence.single(XPathInteger.fromInt(1))]),
+          ),
+          XPathSequence.single(XPathInteger.fromInt(1)),
+        ),
+        isXPathSequence([true]),
+      );
+    });
+
+    test('atomize nested array', () {
+      expect(
+        opValueEqual(
+          XPathSequence.single(
+            XPathArray([
+              XPathSequence.single(
+                XPathArray([XPathSequence.single(XPathInteger.fromInt(1))]),
+              ),
+            ]),
+          ),
+          XPathSequence.single(XPathInteger.fromInt(1)),
+        ),
+        isXPathSequence([true]),
+      );
+    });
+
+    test('atomizing map throws FOTY0013', () {
+      final map = XPathMap({
+        const XPathString('a'): XPathSequence.single(XPathInteger.fromInt(1)),
+      });
+      expect(
+        () => opValueEqual(
+          XPathSequence.single(map),
+          XPathSequence.single(XPathInteger.fromInt(1)),
+        ),
+        throwsA(
+          isXPathEvaluationException(
+            message: contains('Cannot atomize a map or function item'),
+          ),
+        ),
+      );
+    });
+
+    test('atomizing function throws FOTY0013', () {
+      XPathSequence dummy(XPathContext context, List<XPathSequence> args) =>
+          XPathSequence.empty;
+      expect(
+        () => opValueEqual(
+          XPathSequence.single(dummy.toXPathFunction()),
+          XPathSequence.single(XPathInteger.fromInt(1)),
+        ),
+        throwsA(
+          isXPathEvaluationException(
+            message: contains('Cannot atomize a map or function item'),
+          ),
+        ),
+      );
+    });
+
+    test('QName value comparisons and order restriction', () {
+      const q1 = XPathQName(XmlName('foo'));
+      const q2 = XPathQName(XmlName('foo'));
+      const q3 = XPathQName(XmlName('bar'));
+
+      expect(opValueEqual(seq(q1), seq(q2)), isXPathSequence([true]));
+      expect(opValueEqual(seq(q1), seq(q3)), isXPathSequence([false]));
+      expect(opValueNotEqual(seq(q1), seq(q3)), isXPathSequence([true]));
+
+      // Comparing QName with non-QName throws XPTY0004
+      expect(
+        () => opValueEqual(seq(q1), seq(1)),
+        throwsA(isXPathEvaluationException(errorCode: XPathErrorCode.XPTY0004)),
+      );
+      expect(
+        () => opValueNotEqual(seq(q1), seq(1)),
+        throwsA(isXPathEvaluationException(errorCode: XPathErrorCode.XPTY0004)),
+      );
+
+      // Order comparisons on QNames throw XPTY0004
+      expect(
+        () => opValueLessThan(seq(q1), seq(q2)),
+        throwsA(isXPathEvaluationException(errorCode: XPathErrorCode.XPTY0004)),
+      );
+    });
+
+    test('AnyURI and String comparisons', () {
+      const u1 = XPathAnyUri('http://example.com/a');
+      const u2 = XPathAnyUri('http://example.com/b');
+      const s1 = XPathString('http://example.com/a');
+
+      expect(compare(u1, u2), lessThan(0));
+      expect(compare(s1, u2), lessThan(0));
+      expect(compare(u2, s1), greaterThan(0));
+    });
+
+    test('Binary and Duration value comparisons', () {
+      final b1 = XPathBinary.fromHex('0102');
+      final b2 = XPathBinary.fromHex('0102');
+      final b3 = XPathBinary.fromHex('0103');
+
+      expect(opValueEqual(seq(b1), seq(b2)), isXPathSequence([true]));
+      expect(opValueNotEqual(seq(b1), seq(b3)), isXPathSequence([true]));
+      expect(compare(b1, b3), lessThan(0));
+
+      final ymd1 = XPathDuration.tryParseYearMonth('P1Y')!;
+      final ymd2 = XPathDuration.tryParseYearMonth('P2Y')!;
+      expect(compare(ymd1, ymd2), lessThan(0));
+    });
+
+    test('untypedAtomic value comparisons', () {
+      const u = XPathUntypedAtomic('foo');
+      const s = XPathString('foo');
+      expect(opValueEqual(seq(u), seq(s)), isXPathSequence([true]));
+      expect(
+        opValueNotEqual(seq(u), seq(const XPathString('bar'))),
+        isXPathSequence([true]),
+      );
+      expect(
+        opValueLessThan(seq(u), seq(const XPathString('zoo'))),
+        isXPathSequence([true]),
+      );
+    });
+  });
+}

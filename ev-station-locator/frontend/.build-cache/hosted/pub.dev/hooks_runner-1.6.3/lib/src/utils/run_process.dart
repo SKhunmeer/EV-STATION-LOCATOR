@@ -1,0 +1,182 @@
+// Copyright (c) 2023, the Dart project authors.  Please see the AUTHORS file
+// for details. All rights reserved. Use of this source code is governed by a
+// BSD-style license that can be found in the LICENSE file.
+
+import 'dart:async';
+import 'dart:developer';
+import 'dart:io'
+    show Platform, Process, ProcessException, ProcessResult, systemEncoding;
+
+import 'package:file/file.dart';
+import 'package:logging/logging.dart';
+
+/// Runs a [Process].
+///
+/// [executable] must be an absolute path. Relative paths and `PATH` lookup are
+/// not supported. On Windows, [executable] must also include a file extension
+/// (for example `.exe`); `PATHEXT` lookup is not supported.
+///
+/// Supports [executable] paths and [arguments] that contain spaces. Never runs
+/// through a shell, so Windows `cmd.exe` quote-stripping does not apply.
+///
+/// If [logger] is provided, stream stdout and stderr to it.
+///
+/// If [captureOutput], captures stdout and stderr.
+Future<RunProcessResult> runProcess({
+  required FileSystem filesystem,
+  required Uri executable,
+  List<String> arguments = const [],
+  Uri? workingDirectory,
+  Map<String, String>? environment,
+  bool includeParentEnvironment = true,
+  required Logger? logger,
+  bool captureOutput = true,
+  int expectedExitCode = 0,
+  bool throwOnUnexpectedExitCode = false,
+  TimelineTask? task,
+}) async {
+  _validateExecutable(executable);
+
+  final printWorkingDir =
+      workingDirectory != null &&
+      workingDirectory != filesystem.currentDirectory.uri;
+  String quoteIfSpaced(String s) => s.contains(' ') ? '"$s"' : s;
+  final commandString = [
+    if (printWorkingDir) '(cd ${workingDirectory.toFilePath()};',
+    ...?environment?.entries.map((entry) => '${entry.key}=${entry.value}'),
+    quoteIfSpaced(executable.toFilePath()),
+    ...arguments.map(quoteIfSpaced),
+    if (printWorkingDir) ')',
+  ].join(' ');
+  logger?.info('Running `$commandString`.');
+  task?.start(
+    'Process.run',
+    arguments: {
+      'executable': executable.toFilePath(),
+      'arguments': arguments,
+      'workingDirectory': ?workingDirectory?.toFilePath(),
+      'environment': ?environment,
+    },
+  );
+  try {
+    final stdoutBuffer = StringBuffer();
+    final stderrBuffer = StringBuffer();
+    final process = await Process.start(
+      executable.toFilePath(),
+      arguments,
+      workingDirectory: workingDirectory?.toFilePath(),
+      environment: environment,
+      includeParentEnvironment: includeParentEnvironment,
+      // Never run through a shell. On Windows, running an executable through
+      // `cmd.exe /c` mangles the command line when more than one argument is
+      // quoted (cmd strips the outer quotes when the line contains more than
+      // two quote characters), which breaks any invocation whose executable
+      // and arguments contain spaces.
+    );
+
+    final stdoutSub = process.stdout.listen((List<int> data) {
+      try {
+        final decoded = systemEncoding.decode(data);
+        logger?.fine(decoded);
+        if (captureOutput) {
+          stdoutBuffer.write(decoded);
+        }
+      } catch (e) {
+        logger?.warning('Failed to decode stdout: $e');
+        stdoutBuffer.write('Failed to decode stdout: $e');
+      }
+    });
+    final stderrSub = process.stderr.listen((List<int> data) {
+      try {
+        final decoded = systemEncoding.decode(data);
+        logger?.severe(decoded);
+        if (captureOutput) {
+          stderrBuffer.write(decoded);
+        }
+      } catch (e) {
+        logger?.severe('Failed to decode stderr: $e');
+        stderrBuffer.write('Failed to decode stderr: $e');
+      }
+    });
+
+    final (exitCode, _, _) = await (
+      process.exitCode,
+      stdoutSub.asFuture<void>(),
+      stderrSub.asFuture<void>(),
+    ).wait;
+    final result = RunProcessResult(
+      pid: process.pid,
+      command: commandString,
+      exitCode: exitCode,
+      stdout: stdoutBuffer.toString(),
+      stderr: stderrBuffer.toString(),
+    );
+    if (throwOnUnexpectedExitCode && expectedExitCode != exitCode) {
+      throw ProcessException(
+        executable.toFilePath(),
+        arguments,
+        "Full command string: '$commandString'.\n"
+        "Exit code: '$exitCode'.\n"
+        'For the output of the process check the logger output.',
+      );
+    }
+    return result;
+  } finally {
+    task?.finish();
+  }
+}
+
+void _validateExecutable(Uri executable) {
+  if (!executable.isAbsolute) {
+    throw ArgumentError.value(
+      executable,
+      'executable',
+      'Must be an absolute path. Relative paths and PATH lookup are not '
+          'supported.',
+    );
+  }
+  // Without a shell, Windows does not apply PATHEXT, so callers must pass the
+  // real file name including its extension (e.g. `dart.exe`, not `dart`).
+  if (Platform.isWindows && !_hasFileExtension(executable.toFilePath())) {
+    throw ArgumentError.value(
+      executable,
+      'executable',
+      'Must include a file extension (e.g. .exe). PATHEXT lookup is not '
+          'supported.',
+    );
+  }
+}
+
+bool _hasFileExtension(String filePath) {
+  final basename = filePath.replaceAll('\\', '/').split('/').last;
+  final dot = basename.lastIndexOf('.');
+  return dot > 0 && dot < basename.length - 1;
+}
+
+/// Drop in replacement of [ProcessResult].
+class RunProcessResult {
+  final int pid;
+
+  final String command;
+
+  final int exitCode;
+
+  final String stderr;
+
+  final String stdout;
+
+  RunProcessResult({
+    required this.pid,
+    required this.command,
+    required this.exitCode,
+    required this.stderr,
+    required this.stdout,
+  });
+
+  @override
+  String toString() =>
+      '''command: $command
+exitCode: $exitCode
+stdout: $stdout
+stderr: $stderr''';
+}

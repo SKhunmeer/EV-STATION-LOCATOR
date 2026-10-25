@@ -1,0 +1,124 @@
+// Copyright 2024 The Flutter Authors
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file or at https://developers.google.com/open-source/licenses/bsd.
+
+part of '../server_api.dart';
+
+/// A namespace for DevTools extensions server request handlers.
+extension _ExtensionsApiHandler on Never {
+  static Future<shelf.Response> handleServeAvailableExtensions(
+    ServerApi api,
+    Map<String, String> queryParams,
+    ExtensionsManager extensionsManager,
+    DtdInfo? dtd,
+  ) async {
+    final missingRequiredParams = ServerApi._checkRequiredParameters(
+      [ExtensionsApi.packageRootUriPropertyName],
+      queryParams: queryParams,
+      api: api,
+      requestName: ExtensionsApi.apiServeAvailableExtensions,
+    );
+    if (missingRequiredParams != null) return missingRequiredParams;
+
+    final logs = <String>[];
+    final rootFileUriString =
+        queryParams[ExtensionsApi.packageRootUriPropertyName];
+    final result = <String, Object?>{};
+
+    /// Helper to return a success response with all available extensions
+    /// detected by [extensionsManager].
+    shelf.Response succeedWithAvailableExtensions({String? warning}) {
+      final extensions = extensionsManager.devtoolsExtensions
+          .map((p) => p.toJson())
+          .toList();
+      result[ExtensionsApi.extensionsResultPropertyName] = extensions;
+      if (warning != null) {
+        result[ExtensionsApi.extensionsResultWarningPropertyName] = warning;
+      }
+      return ServerApi._encodeResponse(
+        ServerApi._wrapWithLogs(result, logs),
+        api: api,
+      );
+    }
+
+    try {
+      await extensionsManager.serveAvailableExtensions(
+        rootFileUriString,
+        logs,
+        dtd,
+      );
+    } on ExtensionParsingException catch (e) {
+      // For [ExtensionParsingException]s, we should return a success response
+      // with a warning message.
+      result[ExtensionsApi.extensionsResultWarningPropertyName] = e.message;
+    } catch (e) {
+      // If any extensions were successfully detected, return a success response
+      // with a warning.
+      if (extensionsManager.devtoolsExtensions.isNotEmpty) {
+        return succeedWithAvailableExtensions(warning: '$e');
+      }
+      return api.serverError('$e', logs);
+    }
+
+    return succeedWithAvailableExtensions();
+  }
+
+  static shelf.Response handleExtensionEnabledState(
+    ServerApi api,
+    Map<String, String> queryParams,
+  ) {
+    final missingRequiredParams = ServerApi._checkRequiredParameters(
+      [
+        ExtensionsApi.devtoolsOptionsUriPropertyName,
+        ExtensionsApi.extensionNamePropertyName,
+      ],
+      queryParams: queryParams,
+      api: api,
+      requestName: ExtensionsApi.apiExtensionEnabledState,
+    );
+    if (missingRequiredParams != null) return missingRequiredParams;
+
+    final devtoolsOptionsFileUriString =
+        queryParams[ExtensionsApi.devtoolsOptionsUriPropertyName]!;
+    final devtoolsOptionsFileUri = Uri.parse(devtoolsOptionsFileUriString);
+
+    // Validate that the URI is a local file URI whose file name is exactly
+    // 'devtools_options.yaml'. Accepting arbitrary URIs from the query string
+    // would allow an untrusted caller to create or overwrite any file writable
+    // by the DevTools server process. Resolving the name through
+    // `Uri.toFilePath()` + `p.basename` handles both '/' and '\' path
+    // separators, so the check holds for Windows file URIs as well. Requiring
+    // an empty host rejects UNC paths (e.g. `file://server/share/...`) and
+    // keeps `toFilePath()` from throwing on a non-local authority.
+    final isFileUri =
+        devtoolsOptionsFileUri.scheme == 'file' &&
+        devtoolsOptionsFileUri.host.isEmpty;
+    final fileName = isFileUri
+        ? p.basename(devtoolsOptionsFileUri.toFilePath())
+        : '';
+    if (!isFileUri || fileName != 'devtools_options.yaml') {
+      return api.badRequest(
+        'Invalid devtoolsOptionsUri: must be a file: URI named '
+        "'devtools_options.yaml'.",
+      );
+    }
+
+    final extensionName = queryParams[ExtensionsApi.extensionNamePropertyName]!;
+
+    final activate = queryParams[ExtensionsApi.enabledStatePropertyName];
+    if (activate != null) {
+      final newState = ServerApi._devToolsOptions.setExtensionEnabledState(
+        devtoolsOptionsUri: devtoolsOptionsFileUri,
+        extensionName: extensionName,
+        enable: bool.parse(activate),
+      );
+      return ServerApi._encodeResponse(newState.name, api: api);
+    }
+    final activationState = ServerApi._devToolsOptions
+        .lookupExtensionEnabledState(
+          devtoolsOptionsUri: devtoolsOptionsFileUri,
+          extensionName: extensionName,
+        );
+    return ServerApi._encodeResponse(activationState.name, api: api);
+  }
+}

@@ -21,26 +21,34 @@ const green = Color(0xFF087F5B);
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   try {
-    await Firebase.initializeApp();
+    // Firebase configuration is optional for local/API-only runs. Do not
+    // block the entire frontend when a platform has no Firebase options.
+    await Firebase.initializeApp().timeout(const Duration(seconds: 2));
   } catch (_) {}
   runApp(const ChargewiseApp());
 }
 
 class ApiClient {
-  final String baseUrl = const String.fromEnvironment(
+  final String _configuredBaseUrl = const String.fromEnvironment(
     'API_BASE_URL',
     defaultValue: 'http://127.0.0.1:5000/api',
   );
   String? token;
+  String get baseUrl {
+    final value = _configuredBaseUrl.replaceFirst(RegExp(r'/+$'), '');
+    return value.endsWith('/api') ? value : '$value/api';
+  }
+
   Future<dynamic> call(String path, {Map<String, dynamic>? body}) async {
     final headers = {
       'Content-Type': 'application/json',
       if (token != null) 'Authorization': 'Bearer $token',
     };
+    final uri = Uri.parse(baseUrl + path);
     final response = body == null
-        ? await http.get(Uri.parse(baseUrl + path), headers: headers)
+        ? await http.get(uri, headers: headers)
         : await http.post(
-            Uri.parse(baseUrl + path),
+            uri,
             headers: headers,
             body: jsonEncode(body),
           );
@@ -54,7 +62,9 @@ class ApiClient {
     }
     if (response.statusCode >= 400)
       throw Exception(
-        data is Map ? data['error'] ?? 'Request failed' : 'Request failed',
+        data is Map
+            ? '${data['error'] ?? 'Request failed'} (${response.statusCode})'
+            : 'Request failed (${response.statusCode}) at $uri',
       );
     return data;
   }
