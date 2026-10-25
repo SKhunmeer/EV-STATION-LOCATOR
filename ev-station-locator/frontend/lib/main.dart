@@ -6,6 +6,7 @@ import 'dart:convert';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:http/http.dart' as http;
@@ -23,7 +24,11 @@ Future<void> main() async {
   try {
     // Firebase configuration is optional for local/API-only runs. Do not
     // block the entire frontend when a platform has no Firebase options.
-    await Firebase.initializeApp().timeout(const Duration(seconds: 2));
+    // Web builds do not include generated Firebase options in this repository;
+    // skip initialization there so the API-only experience can still render.
+    if (!kIsWeb) {
+      await Firebase.initializeApp().timeout(const Duration(seconds: 2));
+    }
   } catch (_) {}
   runApp(const ChargewiseApp());
 }
