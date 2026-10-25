@@ -49,7 +49,7 @@ Deployment: Render / Gunicorn / PostgreSQL
 
 1. cd frontend
 2. flutter pub get
-3. Update API base URL in lib/core/constants/app_constants.dart (or equivalent)
+3. The default API URL is `http://127.0.0.1:5000/api` for desktop/web. For an Android emulator, use `--dart-define=API_BASE_URL=http://10.0.2.2:5000/api`.
 4. flutter run
 
 ## Docker
@@ -90,7 +90,7 @@ The APK is generated under `build/app/outputs/flutter-apk/app-release.apk`.
 1. Copy `backend/.env.example` to `backend/.env` and add an Open Charge Map API key.
 2. Add `google-services.json` from Firebase to `frontend/android/app/` and enable Email/Password Authentication and Firestore.
 3. Replace `GOOGLE_MAPS_API_KEY` in `frontend/android/app/src/main/res/values/google_maps.xml` with a restricted Android Maps key. Enable Maps SDK for Android and Directions/Routes services if used.
-4. Run the Flutter app with `--dart-define=API_BASE_URL=http://10.0.2.2:5000/api` on the Android emulator. Use the host LAN address on a physical device.
+4. Run the Flutter app with `--dart-define=API_BASE_URL=http://10.0.2.2:5000/api` on the Android emulator. Use the host LAN address on a physical device. Desktop and web use `http://127.0.0.1:5000/api` by default.
 
 ## Ranking and data policy
 
@@ -101,6 +101,8 @@ Congestion is only calculated when fresh comparable occupied/total connector dat
 ## Verification
 
 Run `flutter pub get`, `flutter analyze`, `flutter test`, and `flutter build apk --debug` from `frontend/`. The ranking tests cover compatibility, reachability, missing values, stale availability, confidence, and deterministic ordering. Firebase authentication, Firestore persistence, Google Maps tiles, and live OCM results require the external configuration above.
+
+For a local demo with the included SQLite database, set `ALLOW_DEMO_DATA=true`, run `python seed.py` once from `backend/`, then start the API with `flask --app app:create_app run --host 0.0.0.0 --port 5000`.
 
 ## Folder Structure
 

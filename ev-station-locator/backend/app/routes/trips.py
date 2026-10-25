@@ -12,8 +12,11 @@ trips_bp = Blueprint('trips', __name__)
 def plan_trip():
     payload = request.get_json() or {}
     user = User.query.get_or_404(int(get_jwt_identity()))
-    trip = TripService.plan_trip(user, payload)
-    return jsonify(trip.to_dict()), 200
+    try:
+        trip = TripService.plan_trip(user, payload)
+        return jsonify(trip.to_dict()), 200
+    except (TypeError, ValueError) as exc:
+        return jsonify({'error': str(exc)}), 400
 
 
 @trips_bp.get('/')

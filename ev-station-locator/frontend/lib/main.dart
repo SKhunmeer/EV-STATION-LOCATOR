@@ -29,7 +29,7 @@ Future<void> main() async {
 class ApiClient {
   final String baseUrl = const String.fromEnvironment(
     'API_BASE_URL',
-    defaultValue: 'http://10.0.2.2:5000/api',
+    defaultValue: 'http://127.0.0.1:5000/api',
   );
   String? token;
   Future<dynamic> call(String path, {Map<String, dynamic>? body}) async {
@@ -44,7 +44,14 @@ class ApiClient {
             headers: headers,
             body: jsonEncode(body),
           );
-    final data = response.body.isEmpty ? null : jsonDecode(response.body);
+    dynamic data;
+    if (response.body.isNotEmpty) {
+      try {
+        data = jsonDecode(response.body);
+      } on FormatException {
+        throw Exception('The server returned an invalid response');
+      }
+    }
     if (response.statusCode >= 400)
       throw Exception(
         data is Map ? data['error'] ?? 'Request failed' : 'Request failed',
@@ -707,12 +714,54 @@ class _DiscoverState extends State<Discover> {
           Expanded(
             child: store.loading
                 ? const Center(child: CircularProgressIndicator())
-                : ListView.builder(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    itemCount: store.filteredStations.length,
-                    itemBuilder: (_, i) =>
-                        StationCard(station: store.filteredStations[i]),
-                  ),
+                : store.filteredStations.isEmpty
+                    ? Center(
+                        child: Padding(
+                          padding: const EdgeInsets.all(28),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                store.error == null
+                                    ? Icons.ev_station_outlined
+                                    : Icons.cloud_off_outlined,
+                                size: 52,
+                                color: Colors.black45,
+                              ),
+                              const SizedBox(height: 12),
+                              Text(
+                                store.error == null
+                                    ? 'No charging stations found'
+                                    : 'Could not load charging stations',
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                store.error == null
+                                    ? 'Try a different search or clear your filters.'
+                                    : store.error!,
+                                textAlign: TextAlign.center,
+                              ),
+                              if (store.error != null) ...[
+                                const SizedBox(height: 16),
+                                OutlinedButton.icon(
+                                  onPressed: store.load,
+                                  icon: const Icon(Icons.refresh),
+                                  label: const Text('Retry'),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                      )
+                    : ListView.builder(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        itemCount: store.filteredStations.length,
+                        itemBuilder: (_, i) =>
+                            StationCard(station: store.filteredStations[i]),
+                      ),
           ),
         ],
       ),

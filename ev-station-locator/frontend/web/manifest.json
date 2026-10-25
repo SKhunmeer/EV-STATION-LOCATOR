@@ -1,11 +1,11 @@
 {
-    "name": "ev_station_locator",
-    "short_name": "ev_station_locator",
+    "name": "Chargewise EV Station Locator",
+    "short_name": "Chargewise",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#F7FBF8",
+    "theme_color": "#087F5B",
+    "description": "Find, compare, and choose EV charging stations.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

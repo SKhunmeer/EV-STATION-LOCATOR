@@ -7,15 +7,26 @@ from app.models import Connector, Reservation
 class ReservationService:
     @staticmethod
     def create_reservation(user_id, payload):
-        station_id = payload['station_id']
-        connector_id = payload['connector_id']
-        reservation_date = datetime.strptime(payload['reservation_date'], '%Y-%m-%d').date()
-        start_time = datetime.strptime(payload['start_time'], '%H:%M').time()
-        end_time = datetime.strptime(payload['end_time'], '%H:%M').time()
+        required = ('station_id', 'connector_id', 'reservation_date', 'start_time', 'end_time')
+        missing = [field for field in required if field not in payload]
+        if missing:
+            raise ValueError(f'Missing reservation fields: {", ".join(missing)}')
+        try:
+            station_id = int(payload['station_id'])
+            connector_id = int(payload['connector_id'])
+            reservation_date = datetime.strptime(payload['reservation_date'], '%Y-%m-%d').date()
+            start_time = datetime.strptime(payload['start_time'], '%H:%M').time()
+            end_time = datetime.strptime(payload['end_time'], '%H:%M').time()
+        except (TypeError, ValueError):
+            raise ValueError('Use station/connector IDs, YYYY-MM-DD, and HH:MM time values')
+        if end_time <= start_time:
+            raise ValueError('Reservation end time must be after start time')
 
         connector = Connector.query.get_or_404(connector_id)
         if connector.station_id != station_id:
             raise ValueError('Connector does not belong to the selected station')
+        if connector.status != 'AVAILABLE':
+            raise ValueError('This connector is not currently available for reservation')
 
         conflict = Reservation.query.filter(
             Reservation.connector_id == connector_id,
