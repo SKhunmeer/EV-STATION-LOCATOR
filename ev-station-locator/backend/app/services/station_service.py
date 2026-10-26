@@ -127,16 +127,24 @@ class StationService:
             )]
         if not StationService._demo_allowed():
             return []
+        user_lat = float(os.getenv('OCM_LATITUDE', 17.4065))
+        user_lng = float(os.getenv('OCM_LONGITUDE', 78.4772))
         if not query:
-            return [s.to_dict(include_connectors=True) for s in ChargingStation.query.all()]
-        q = f'%{query.lower()}%'
-        stations = ChargingStation.query.join(Provider).filter(
-            (ChargingStation.name.ilike(q)) |
-            (Provider.name.ilike(q)) |
-            (ChargingStation.city.ilike(q)) |
-            (ChargingStation.address.ilike(q))
-        ).all()
-        return [s.to_dict(include_connectors=True) for s in stations]
+            stations = ChargingStation.query.all()
+        else:
+            q = f'%{query.lower()}%'
+            stations = ChargingStation.query.join(Provider).filter(
+                (ChargingStation.name.ilike(q)) |
+                (Provider.name.ilike(q)) |
+                (ChargingStation.city.ilike(q)) |
+                (ChargingStation.address.ilike(q))
+            ).all()
+        result = []
+        for s in stations:
+            d = s.to_dict(include_connectors=True)
+            d['distance_km'] = round(StationService.haversine(user_lat, user_lng, s.latitude, s.longitude), 2)
+            result.append(d)
+        return result
 
     @staticmethod
     def filter_stations(**kwargs):
