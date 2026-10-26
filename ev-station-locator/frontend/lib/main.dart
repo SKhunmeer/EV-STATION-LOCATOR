@@ -1476,364 +1476,696 @@ class _HeroBadge extends StatelessWidget {
 // ==========================================
 // 2. INTERACTIVE MAP SCREEN
 // ==========================================
+enum GoogleMapLayerType { roadmap, satellite, terrain }
+
 class InteractiveMapPage extends StatefulWidget {
   const InteractiveMapPage({super.key});
   @override
   State<InteractiveMapPage> createState() => _InteractiveMapPageState();
 }
 
-class _InteractiveMapPageState extends State<InteractiveMapPage> {
+class _InteractiveMapPageState extends State<InteractiveMapPage> with SingleTickerProviderStateMixin {
   Map<String, dynamic>? selectedStation;
-  double zoom = 1.0;
-  Offset panOffset = Offset.zero;
+  double zoom = 12.0;
+  double centerLat = 17.4300;
+  double centerLng = 78.4300;
+  GoogleMapLayerType activeLayer = GoogleMapLayerType.roadmap;
+  String activeFilter = 'ALL';
+  Timer? _liveSyncTimer;
+  DateTime lastSynced = DateTime.now();
+  bool isSyncing = false;
+  late AnimationController _pulseController;
+
+  @override
+  void initState() {
+    super.initState();
+    _pulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 2),
+    )..repeat(reverse: true);
+
+    // Auto-sync live station data every 20 seconds from the live backend
+    _liveSyncTimer = Timer.periodic(const Duration(seconds: 20), (_) => _syncLiveStations());
+  }
+
+  @override
+  void dispose() {
+    _liveSyncTimer?.cancel();
+    _pulseController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _syncLiveStations() async {
+    if (!mounted || isSyncing) return;
+    setState(() => isSyncing = true);
+    try {
+      await context.read<StationStore>().load();
+      if (mounted) {
+        setState(() {
+          lastSynced = DateTime.now();
+          // Update selected station reference if present
+          if (selectedStation != null) {
+            final store = context.read<StationStore>();
+            final match = store.stations.firstWhere(
+              (s) => s['id'] == selectedStation!['id'],
+              orElse: () => selectedStation!,
+            );
+            selectedStation = match;
+          }
+        });
+      }
+    } catch (_) {}
+    if (mounted) setState(() => isSyncing = false);
+  }
+
+  // Web Mercator projections
+  static double _lonToTileX(double lon, int z) => (lon + 180.0) / 360.0 * (1 << z);
+  static double _latToTileY(double lat, int z) {
+    final clampedLat = lat.clamp(-85.0511, 85.0511);
+    final latRad = clampedLat * math.pi / 180.0;
+    return (1.0 - math.log(math.tan(latRad) + 1.0 / math.cos(latRad)) / math.pi) / 2.0 * (1 << z);
+  }
+
+  static double _tileYToLat(double y, int z) {
+    final n = math.pi - 2.0 * math.pi * y / (1 << z);
+    return 180.0 / math.pi * math.atan(0.5 * (math.exp(n) - math.exp(-n)));
+  }
+
+  String _getTileUrl(int x, int y, int z) {
+    switch (activeLayer) {
+      case GoogleMapLayerType.satellite:
+        // Google Hybrid Satellite (satellite imagery with roads and labels)
+        return 'https://mt1.google.com/vt/lyrs=y&x=$x&y=$y&z=$z';
+      case GoogleMapLayerType.terrain:
+        return 'https://mt1.google.com/vt/lyrs=p&x=$x&y=$y&z=$z';
+      case GoogleMapLayerType.roadmap:
+      default:
+        // Google Standard Roadmap
+        return 'https://mt1.google.com/vt/lyrs=m&x=$x&y=$y&z=$z';
+    }
+  }
+
+  List<Map<String, dynamic>> _filterStations(List<Map<String, dynamic>> allStations) {
+    switch (activeFilter) {
+      case 'AVAILABLE':
+        return allStations.where((s) => s['status'] == 'AVAILABLE').toList();
+      case 'FAST':
+        return allStations.where((s) => ((s['charging_power_kw'] as num?)?.toDouble() ?? 0) >= 60.0).toList();
+      case 'ULTRA':
+        return allStations.where((s) => ((s['charging_power_kw'] as num?)?.toDouble() ?? 0) >= 100.0).toList();
+      case 'ALL':
+      default:
+        return allStations;
+    }
+  }
 
   @override
   Widget build(BuildContext context) => Consumer<StationStore>(
         builder: (_, store, __) {
+          final displayStations = _filterStations(store.stations);
+
           return Scaffold(
             appBar: AppBar(
-              title: const Text('Live EV Charging Map', style: TextStyle(fontWeight: FontWeight.bold)),
+              title: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: store.isLiveBackend ? const Color(0xFF10B981).withAlpha(30) : Colors.amber.withAlpha(30),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: store.isLiveBackend ? const Color(0xFF10B981) : Colors.amber),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        AnimatedBuilder(
+                          animation: _pulseController,
+                          builder: (_, __) => Container(
+                            width: 8,
+                            height: 8,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: store.isLiveBackend
+                                  ? Color.lerp(const Color(0xFF10B981), const Color(0xFF059669), _pulseController.value)
+                                  : Colors.amber,
+                              boxShadow: [
+                                BoxShadow(
+                                  color: (store.isLiveBackend ? const Color(0xFF10B981) : Colors.amber).withAlpha(120),
+                                  blurRadius: 4 * _pulseController.value + 2,
+                                  spreadRadius: 1,
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          store.isLiveBackend ? 'LIVE MAP' : 'MAP PREVIEW',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: 0.8,
+                            color: store.isLiveBackend ? const Color(0xFF065F46) : const Color(0xFF92400E),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  const Expanded(
+                    child: Text(
+                      'Live EV Google Map',
+                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
               actions: [
+                IconButton(
+                  onPressed: isSyncing ? null : _syncLiveStations,
+                  icon: isSyncing
+                      ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: kPrimaryGreen))
+                      : const Icon(Icons.sync),
+                  tooltip: 'Sync live station data',
+                ),
                 IconButton(
                   onPressed: () {
                     setState(() {
-                      zoom = 1.0;
-                      panOffset = Offset.zero;
+                      centerLat = 17.4300;
+                      centerLng = 78.4300;
+                      zoom = 12.0;
                       selectedStation = null;
                     });
                   },
                   icon: const Icon(Icons.my_location),
-                  tooltip: 'Reset view to current location',
+                  tooltip: 'Center on Hyderabad',
                 ),
               ],
             ),
             body: Stack(
               children: [
-                // Robust interactive Vector Map Canvas (100% reliable on Flutter Web)
-                GestureDetector(
-                  onPanUpdate: (details) {
-                    setState(() {
-                      panOffset += details.delta;
-                    });
-                  },
-                  child: LayoutBuilder(
-                    builder: (context, constraints) {
-                      return CustomPaint(
-                        size: Size(constraints.maxWidth, constraints.maxHeight),
-                        painter: _VectorMapPainter(
-                          stations: store.stations,
-                          selectedStation: selectedStation,
-                          zoom: zoom,
-                          offset: panOffset,
-                        ),
-                      );
-                    },
-                  ),
-                ),
-
-                // Interactive Station Marker Buttons placed according to station positions
+                // 1. Interactive Real Google Maps Tiles & Drag Canvas
                 LayoutBuilder(
                   builder: (context, constraints) {
-                    final cx = constraints.maxWidth / 2 + panOffset.dx;
-                    final cy = constraints.maxHeight / 2 + panOffset.dy;
-                    // Center Hyderabad: 17.42, 78.43
-                    return Stack(
-                      children: store.stations.map((s) {
-                        final lat = (s['latitude'] as num?)?.toDouble() ?? 17.42;
-                        final lng = (s['longitude'] as num?)?.toDouble() ?? 78.43;
-                        // Transform lat/lng into screen coordinates
-                        final x = cx + (lng - 78.43) * 2200 * zoom;
-                        final y = cy - (lat - 17.42) * 2200 * zoom;
+                    final width = constraints.maxWidth;
+                    final height = constraints.maxHeight;
+                    final z = zoom.floor().clamp(10, 16);
+                    final scale = math.pow(2.0, zoom - z).toDouble();
 
-                        final isSelected = selectedStation?['id'] == s['id'];
-                        final status = s['status']?.toString() ?? 'AVAILABLE';
-                        final markerColor = status == 'AVAILABLE'
-                            ? const Color(0xFF10B981)
-                            : (status == 'OCCUPIED' ? const Color(0xFFF59E0B) : const Color(0xFFEF4444));
+                    final centerTileX = _lonToTileX(centerLng, z);
+                    final centerTileY = _latToTileY(centerLat, z);
 
-                        return Positioned(
-                          left: x - 22,
-                          top: y - 44,
-                          child: GestureDetector(
-                            onTap: () {
-                              setState(() {
-                                selectedStation = s;
-                              });
-                            },
-                            child: AnimatedScale(
-                              scale: isSelected ? 1.25 : 1.0,
-                              duration: const Duration(milliseconds: 200),
-                              child: Column(
-                                children: [
-                                  Container(
-                                    padding: const EdgeInsets.all(8),
-                                    decoration: BoxDecoration(
-                                      color: markerColor,
-                                      shape: BoxShape.circle,
-                                      border: Border.all(color: Colors.white, width: 2.5),
-                                      boxShadow: [
-                                        BoxShadow(color: Colors.black.withAlpha(isSelected ? 60 : 30), blurRadius: isSelected ? 10 : 5),
-                                      ],
-                                    ),
-                                    child: const Icon(Icons.bolt, color: Colors.white, size: 18),
-                                  ),
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                    decoration: BoxDecoration(
-                                      color: Colors.black87,
-                                      borderRadius: BorderRadius.circular(6),
-                                    ),
-                                    child: Text(
-                                      '${(s['charging_power_kw'] as num?)?.round() ?? 50}kW',
-                                      style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                    final cx = width / 2;
+                    final cy = height / 2;
+
+                    // Tile bounds
+                    final minTileX = (centerTileX - (cx / (256.0 * scale))).floor() - 1;
+                    final maxTileX = (centerTileX + (cx / (256.0 * scale))).ceil() + 1;
+                    final minTileY = (centerTileY - (cy / (256.0 * scale))).floor() - 1;
+                    final maxTileY = (centerTileY + (cy / (256.0 * scale))).ceil() + 1;
+
+                    return GestureDetector(
+                      onPanUpdate: (details) {
+                        setState(() {
+                          final dTileX = -details.delta.dx / (256.0 * scale);
+                          final dTileY = -details.delta.dy / (256.0 * scale);
+                          centerLng += dTileX * 360.0 / (1 << z);
+                          final newY = centerTileY + dTileY;
+                          centerLat = _tileYToLat(newY, z);
+                        });
+                      },
+                      child: ClipRect(
+                        child: Stack(
+                          children: [
+                            // Tile background color
+                            Container(
+                              color: activeLayer == GoogleMapLayerType.satellite ? const Color(0xFF0F172A) : const Color(0xFFF1F5F9),
+                            ),
+
+                            // Render Google Maps Raster Tiles
+                            for (int tx = minTileX; tx <= maxTileX; tx++)
+                              for (int ty = minTileY; ty <= maxTileY; ty++)
+                                Positioned(
+                                  left: cx + (tx - centerTileX) * 256.0 * scale,
+                                  top: cy + (ty - centerTileY) * 256.0 * scale,
+                                  width: 256.0 * scale,
+                                  height: 256.0 * scale,
+                                  child: Image.network(
+                                    _getTileUrl(tx, ty, z),
+                                    fit: BoxFit.cover,
+                                    errorBuilder: (_, __, ___) => Container(
+                                      color: const Color(0xFFE2E8F0),
+                                      alignment: Alignment.center,
+                                      child: const Icon(Icons.map_outlined, color: Colors.black26, size: 28),
                                     ),
                                   ),
-                                ],
+                                ),
+
+                            // Google Maps watermark & attribution badge
+                            Positioned(
+                              left: 12,
+                              bottom: selectedStation != null ? 240 : 12,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: Colors.white.withAlpha(220),
+                                  borderRadius: BorderRadius.circular(6),
+                                  boxShadow: [BoxShadow(color: Colors.black.withAlpha(25), blurRadius: 4)],
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    const Text('Google', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 13, color: Color(0xFF4285F4))),
+                                    const SizedBox(width: 4),
+                                    Text('Maps • ${activeLayer.name.toUpperCase()}', style: const TextStyle(fontSize: 10, color: Colors.black54, fontWeight: FontWeight.bold)),
+                                  ],
+                                ),
                               ),
                             ),
-                          ),
-                        );
-                      }).toList(),
+
+                            // EV Station Markers with real GPS coordinates
+                            for (final s in displayStations)
+                              _buildStationMarker(
+                                station: s,
+                                z: z,
+                                scale: scale,
+                                centerTileX: centerTileX,
+                                centerTileY: centerTileY,
+                                cx: cx,
+                                cy: cy,
+                              ),
+                          ],
+                        ),
+                      ),
                     );
                   },
                 ),
 
-                // Map Top Information Banner
+                // 2. Map Top Status & Live Filter Bar
                 Positioned(
-                  top: 16,
-                  left: 16,
-                  right: 16,
-                  child: Card(
-                    elevation: 3,
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                      child: Row(
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.all(6),
-                            decoration: BoxDecoration(color: kEmerald.withAlpha(30), shape: BoxShape.circle),
-                            child: const Icon(Icons.location_searching, color: kPrimaryGreen, size: 18),
+                  top: 14,
+                  left: 14,
+                  right: 14,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // Network Summary Pill Card
+                      Card(
+                        elevation: 4,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                          child: Row(
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.all(7),
+                                decoration: BoxDecoration(
+                                  color: kPrimaryGreen.withAlpha(30),
+                                  shape: BoxShape.circle,
+                                ),
+                                child: const Icon(Icons.bolt, color: kPrimaryGreen, size: 20),
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Row(
+                                      children: [
+                                        const Text('Hyderabad EV Network', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                                        const Spacer(),
+                                        Text(
+                                          'Sync: ${_formatSyncTime(lastSynced)}',
+                                          style: const TextStyle(fontSize: 11, color: Colors.black54),
+                                        ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      '${store.stations.length} Total • ${store.stations.where((s) => s['status'] == 'AVAILABLE').length} Available Now',
+                                      style: const TextStyle(fontSize: 12, color: Colors.black87),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
                           ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                const Text('Hyderabad EV Network', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-                                Text('${store.stations.length} stations active • Tap marker to preview', style: const TextStyle(fontSize: 12, color: Colors.black54)),
-                              ],
-                            ),
-                          ),
-                        ],
+                        ),
                       ),
-                    ),
+
+                      const SizedBox(height: 8),
+
+                      // Quick Filter Chips row
+                      SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: Row(
+                          children: [
+                            _buildFilterChip('ALL', 'All (${store.stations.length})'),
+                            const SizedBox(width: 6),
+                            _buildFilterChip('AVAILABLE', '🟢 Available (${store.stations.where((s) => s['status'] == 'AVAILABLE').length})'),
+                            const SizedBox(width: 6),
+                            _buildFilterChip('FAST', '⚡ Fast ≥60kW'),
+                            const SizedBox(width: 6),
+                            _buildFilterChip('ULTRA', '🚀 Ultra-Fast ≥100kW'),
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
                 ),
 
-                // Map Floating Zoom Controls
+                // 3. Map Layer Switcher & Zoom Controls
                 Positioned(
-                  right: 16,
-                  bottom: selectedStation != null ? 220 : 24,
+                  right: 14,
+                  bottom: selectedStation != null ? 240 : 20,
                   child: Column(
                     children: [
+                      // Layer Switcher (Roadmap / Satellite / Terrain)
                       FloatingActionButton.small(
-                        heroTag: 'zoom_in',
+                        heroTag: 'map_layer_toggle',
                         backgroundColor: Colors.white,
-                        onPressed: () => setState(() => zoom = math.min(zoom + 0.25, 2.5)),
+                        tooltip: 'Switch Map Layer (Road / Satellite / Terrain)',
+                        onPressed: () {
+                          setState(() {
+                            if (activeLayer == GoogleMapLayerType.roadmap) {
+                              activeLayer = GoogleMapLayerType.satellite;
+                            } else if (activeLayer == GoogleMapLayerType.satellite) {
+                              activeLayer = GoogleMapLayerType.terrain;
+                            } else {
+                              activeLayer = GoogleMapLayerType.roadmap;
+                            }
+                          });
+                        },
+                        child: Icon(
+                          activeLayer == GoogleMapLayerType.satellite
+                              ? Icons.satellite_alt
+                              : (activeLayer == GoogleMapLayerType.terrain ? Icons.terrain : Icons.map),
+                          color: kPrimaryGreen,
+                          size: 20,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+
+                      // Zoom In
+                      FloatingActionButton.small(
+                        heroTag: 'zoom_in_btn',
+                        backgroundColor: Colors.white,
+                        onPressed: () => setState(() => zoom = (zoom + 0.5).clamp(10.0, 16.0)),
                         child: const Icon(Icons.add, color: Colors.black87),
                       ),
                       const SizedBox(height: 8),
+
+                      // Zoom Out
                       FloatingActionButton.small(
-                        heroTag: 'zoom_out',
+                        heroTag: 'zoom_out_btn',
                         backgroundColor: Colors.white,
-                        onPressed: () => setState(() => zoom = math.max(zoom - 0.25, 0.6)),
+                        onPressed: () => setState(() => zoom = (zoom - 0.5).clamp(10.0, 16.0)),
                         child: const Icon(Icons.remove, color: Colors.black87),
                       ),
                     ],
                   ),
                 ),
 
-                // Selected Station Bottom Preview Sheet
+                // 4. Selected Station Bottom Details Sheet
                 if (selectedStation != null)
                   Positioned(
-                    left: 16,
-                    right: 16,
-                    bottom: 16,
-                    child: Card(
-                      elevation: 8,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                      child: Padding(
-                        padding: const EdgeInsets.all(18),
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Container(
-                                  padding: const EdgeInsets.all(8),
-                                  decoration: BoxDecoration(
-                                    color: selectedStation!['status'] == 'AVAILABLE' ? const Color(0xFFDCFCE7) : const Color(0xFFFEF3C7),
-                                    borderRadius: BorderRadius.circular(10),
-                                  ),
-                                  child: Icon(
-                                    Icons.ev_station,
-                                    color: selectedStation!['status'] == 'AVAILABLE' ? const Color(0xFF166534) : const Color(0xFFB45309),
-                                  ),
-                                ),
-                                const SizedBox(width: 12),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        selectedStation!['name']?.toString() ?? 'Station',
-                                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 17),
-                                      ),
-                                      Text(
-                                        '${selectedStation!['provider']} • ${selectedStation!['distance_km'] ?? '—'} km',
-                                        style: const TextStyle(color: Colors.black54, fontSize: 13),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                IconButton(
-                                  onPressed: () => setState(() => selectedStation = null),
-                                  icon: const Icon(Icons.close, size: 20),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 12),
-                            Row(
-                              children: [
-                                Chip(
-                                  avatar: const Icon(Icons.bolt, size: 16, color: kPrimaryGreen),
-                                  label: Text('${selectedStation!['charging_power_kw'] ?? 50} kW'),
-                                ),
-                                const SizedBox(width: 8),
-                                Chip(
-                                  label: Text('₹${selectedStation!['price_per_kwh'] ?? 16}/kWh'),
-                                ),
-                                const SizedBox(width: 8),
-                                Chip(
-                                  backgroundColor: selectedStation!['status'] == 'AVAILABLE' ? const Color(0xFFDCFCE7) : const Color(0xFFFEF3C7),
-                                  label: Text(
-                                    selectedStation!['status']?.toString() ?? 'UNKNOWN',
-                                    style: TextStyle(
-                                      color: selectedStation!['status'] == 'AVAILABLE' ? const Color(0xFF166534) : const Color(0xFFB45309),
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 12,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 14),
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: FilledButton.icon(
-                                    onPressed: () {
-                                      Navigator.push(
-                                        context,
-                                        MaterialPageRoute(builder: (_) => DetailsScreen(station: selectedStation!)),
-                                      );
-                                    },
-                                    icon: const Icon(Icons.info_outline, size: 18),
-                                    label: const Text('Full Details'),
-                                  ),
-                                ),
-                                const SizedBox(width: 10),
-                                Expanded(
-                                  child: OutlinedButton.icon(
-                                    onPressed: () async {
-                                      final lat = selectedStation!['latitude'];
-                                      final lng = selectedStation!['longitude'];
-                                      if (lat != null && lng != null) {
-                                        await launchUrl(
-                                          Uri.parse('https://www.google.com/maps/dir/?api=1&destination=$lat,$lng'),
-                                          mode: LaunchMode.externalApplication,
-                                        );
-                                      }
-                                    },
-                                    icon: const Icon(Icons.navigation, size: 18, color: kPrimaryGreen),
-                                    label: const Text('Directions', style: TextStyle(color: kPrimaryGreen)),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
+                    left: 14,
+                    right: 14,
+                    bottom: 14,
+                    child: _buildStationDetailCard(selectedStation!),
                   ),
               ],
             ),
           );
         },
       );
+
+  Widget _buildFilterChip(String key, String label) {
+    final isSelected = activeFilter == key;
+    return ChoiceChip(
+      label: Text(
+        label,
+        style: TextStyle(
+          fontSize: 12,
+          fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+          color: isSelected ? Colors.white : Colors.black87,
+        ),
+      ),
+      selected: isSelected,
+      selectedColor: kPrimaryGreen,
+      backgroundColor: Colors.white,
+      elevation: 2,
+      onSelected: (_) => setState(() => activeFilter = key),
+    );
+  }
+
+  Widget _buildStationMarker({
+    required Map<String, dynamic> station,
+    required int z,
+    required double scale,
+    required double centerTileX,
+    required double centerTileY,
+    required double cx,
+    required double cy,
+  }) {
+    final lat = (station['latitude'] as num?)?.toDouble() ?? 17.43;
+    final lng = (station['longitude'] as num?)?.toDouble() ?? 78.43;
+
+    final tileX = _lonToTileX(lng, z);
+    final tileY = _latToTileY(lat, z);
+
+    final x = cx + (tileX - centerTileX) * 256.0 * scale;
+    final y = cy + (tileY - centerTileY) * 256.0 * scale;
+
+    final isSelected = selectedStation?['id'] == station['id'];
+    final status = station['status']?.toString() ?? 'AVAILABLE';
+    final markerColor = status == 'AVAILABLE'
+        ? const Color(0xFF10B981)
+        : (status == 'OCCUPIED' ? const Color(0xFFF59E0B) : const Color(0xFFEF4444));
+
+    final powerKw = (station['charging_power_kw'] as num?)?.round() ?? 60;
+
+    return Positioned(
+      left: x - 32,
+      top: y - 56,
+      width: 64,
+      height: 60,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () {
+          setState(() {
+            selectedStation = station;
+            // Center smoothly on selected station
+            centerLat = lat;
+            centerLng = lng;
+          });
+        },
+        child: AnimatedScale(
+          scale: isSelected ? 1.25 : 1.0,
+          duration: const Duration(milliseconds: 200),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Top Power Badge
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+                decoration: BoxDecoration(
+                  color: Colors.black87,
+                  borderRadius: BorderRadius.circular(5),
+                  boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 3)],
+                ),
+                child: Text(
+                  '${powerKw}kW',
+                  style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                ),
+              ),
+
+              // Pin Pinhead Circle
+              Container(
+                margin: const EdgeInsets.only(top: 2),
+                width: 28,
+                height: 28,
+                decoration: BoxDecoration(
+                  color: markerColor,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Colors.white, width: 2.5),
+                  boxShadow: [
+                    BoxShadow(
+                      color: markerColor.withAlpha(isSelected ? 160 : 90),
+                      blurRadius: isSelected ? 10 : 5,
+                      spreadRadius: isSelected ? 2 : 0,
+                    ),
+                  ],
+                ),
+                child: const Icon(Icons.bolt, color: Colors.white, size: 16),
+              ),
+
+              // Pin bottom pointer caret
+              CustomPaint(
+                size: const Size(8, 5),
+                painter: _PinPointerPainter(color: markerColor),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStationDetailCard(Map<String, dynamic> station) {
+    final status = station['status']?.toString() ?? 'AVAILABLE';
+    final isAvailable = status == 'AVAILABLE';
+    final power = station['charging_power_kw'] ?? 60;
+    final price = station['price_per_kwh'] ?? 16;
+    final distance = station['distance_km'] ?? '3.8';
+    final lat = station['latitude'];
+    final lng = station['longitude'];
+    final availableConnectors = station['available_connectors'] ?? (isAvailable ? 3 : 0);
+    final totalConnectors = station['total_connectors'] ?? 4;
+
+    return Card(
+      elevation: 10,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: isAvailable ? const Color(0xFFDCFCE7) : const Color(0xFFFEF3C7),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Icon(
+                    Icons.ev_station,
+                    color: isAvailable ? const Color(0xFF166534) : const Color(0xFFB45309),
+                    size: 24,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        station['name']?.toString() ?? 'EV Hub',
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        '${station['provider'] ?? 'EV Network'} • $distance km • ${station['address'] ?? 'Hyderabad'}',
+                        style: const TextStyle(color: Colors.black54, fontSize: 12),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  onPressed: () => setState(() => selectedStation = null),
+                  icon: const Icon(Icons.close, size: 20),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 6,
+              children: [
+                Chip(
+                  visualDensity: VisualDensity.compact,
+                  avatar: const Icon(Icons.bolt, size: 14, color: kPrimaryGreen),
+                  label: Text('$power kW Fast DC', style: const TextStyle(fontSize: 12)),
+                ),
+                Chip(
+                  visualDensity: VisualDensity.compact,
+                  label: Text('₹$price / kWh', style: const TextStyle(fontSize: 12)),
+                ),
+                Chip(
+                  visualDensity: VisualDensity.compact,
+                  backgroundColor: isAvailable ? const Color(0xFFDCFCE7) : const Color(0xFFFEF3C7),
+                  label: Text(
+                    '$availableConnectors / $totalConnectors Plugs Free',
+                    style: TextStyle(
+                      color: isAvailable ? const Color(0xFF166534) : const Color(0xFFB45309),
+                      fontWeight: FontWeight.bold,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => DetailsScreen(station: station)),
+                      );
+                    },
+                    icon: const Icon(Icons.info_outline, size: 18),
+                    label: const Text('Full Details'),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: FilledButton.icon(
+                    onPressed: () async {
+                      if (lat != null && lng != null) {
+                        final uri = Uri.parse('https://www.google.com/maps/dir/?api=1&destination=$lat,$lng');
+                        await launchUrl(uri, mode: LaunchMode.externalApplication);
+                      }
+                    },
+                    style: FilledButton.styleFrom(backgroundColor: kPrimaryGreen),
+                    icon: const Icon(Icons.navigation, size: 18),
+                    label: const Text('Google Maps'),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _formatSyncTime(DateTime dt) {
+    final h = dt.hour % 12 == 0 ? 12 : dt.hour % 12;
+    final m = dt.minute.toString().padLeft(2, '0');
+    final s = dt.second.toString().padLeft(2, '0');
+    final ampm = dt.hour >= 12 ? 'PM' : 'AM';
+    return '$h:$m:$s $ampm';
+  }
 }
 
-class _VectorMapPainter extends CustomPainter {
-  _VectorMapPainter({
-    required this.stations,
-    required this.selectedStation,
-    required this.zoom,
-    required this.offset,
-  });
-
-  final List<Map<String, dynamic>> stations;
-  final Map<String, dynamic>? selectedStation;
-  final double zoom;
-  final Offset offset;
+class _PinPointerPainter extends CustomPainter {
+  const _PinPointerPainter({required this.color});
+  final Color color;
 
   @override
   void paint(Canvas canvas, Size size) {
-    // Background terrain
-    final bgPaint = Paint()..color = const Color(0xFFE2E8F0);
-    canvas.drawRect(Rect.fromLTWH(0, 0, size.width, size.height), bgPaint);
-
-    final cx = size.width / 2 + offset.dx;
-    final cy = size.height / 2 + offset.dy;
-
-    // Grid lines
-    final gridPaint = Paint()
-      ..color = const Color(0xFFCBD5E1)
-      ..strokeWidth = 1.0;
-    for (double i = -size.width; i < size.width * 2; i += 60 * zoom) {
-      canvas.drawLine(Offset(i + offset.dx % (60 * zoom), 0), Offset(i + offset.dx % (60 * zoom), size.height), gridPaint);
-    }
-    for (double i = -size.height; i < size.height * 2; i += 60 * zoom) {
-      canvas.drawLine(Offset(0, i + offset.dy % (60 * zoom)), Offset(size.width, i + offset.dy % (60 * zoom)), gridPaint);
-    }
-
-    // Outer Ring Road loop simulated
-    final roadPaint = Paint()
-      ..color = const Color(0xFF94A3B8)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 6.0 * zoom;
-    canvas.drawCircle(Offset(cx, cy), 180 * zoom, roadPaint);
-
-    // Arterial highways
-    final highwayPaint = Paint()
-      ..color = const Color(0xFF64748B)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 4.0 * zoom;
-    canvas.drawLine(Offset(cx - 240 * zoom, cy), Offset(cx + 240 * zoom, cy), highwayPaint);
-    canvas.drawLine(Offset(cx, cy - 240 * zoom), Offset(cx, cy + 240 * zoom), highwayPaint);
-
-    // User location radar pulse
-    final userPaint = Paint()..color = const Color(0xFF0284C7);
-    final userHalo = Paint()..color = const Color(0xFF0284C7).withAlpha(40);
-    canvas.drawCircle(Offset(cx, cy), 28 * zoom, userHalo);
-    canvas.drawCircle(Offset(cx, cy), 9 * zoom, userPaint);
-    canvas.drawCircle(Offset(cx, cy), 9 * zoom, Paint()..color = Colors.white..style = PaintingStyle.stroke..strokeWidth = 2.5);
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.fill;
+    final path = Path()
+      ..moveTo(0, 0)
+      ..lineTo(size.width, 0)
+      ..lineTo(size.width / 2, size.height)
+      ..close();
+    canvas.drawPath(path, paint);
   }
 
   @override
-  bool shouldRepaint(covariant _VectorMapPainter oldDelegate) =>
-      oldDelegate.zoom != zoom || oldDelegate.offset != offset || oldDelegate.selectedStation != selectedStation;
+  bool shouldRepaint(covariant _PinPointerPainter oldDelegate) => oldDelegate.color != color;
 }
 
 // ==========================================
