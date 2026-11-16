@@ -315,8 +315,10 @@ class ApiClient {
     final uri = Uri.parse(base + path);
     http.Response response;
     try {
-      if (body != null || method == 'POST') {
+      if (method == 'POST') {
         response = await http.post(uri, headers: headers, body: jsonEncode(body ?? {})).timeout(const Duration(seconds: 4));
+      } else if (method == 'PUT') {
+        response = await http.put(uri, headers: headers, body: jsonEncode(body ?? {})).timeout(const Duration(seconds: 4));
       } else if (method == 'DELETE') {
         response = await http.delete(uri, headers: headers).timeout(const Duration(seconds: 4));
       } else {
@@ -608,11 +610,13 @@ class StationStore extends ChangeNotifier {
 
   Future<bool> createReservation(int stationId, int connectorId, DateTime startTime, int durationMinutes) async {
     try {
+      final endTime = startTime.add(Duration(minutes: durationMinutes));
       final res = await api.call('/reservations/', method: 'POST', body: {
         'station_id': stationId,
         'connector_id': connectorId,
-        'start_time': startTime.toIso8601String(),
-        'duration_minutes': durationMinutes,
+        'reservation_date': startTime.toIso8601String().substring(0, 10),
+        'start_time': '${startTime.hour.toString().padLeft(2, '0')}:${startTime.minute.toString().padLeft(2, '0')}',
+        'end_time': '${endTime.hour.toString().padLeft(2, '0')}:${endTime.minute.toString().padLeft(2, '0')}',
       });
       if (res is Map) {
         userReservations.add(Map<String, dynamic>.from(res));
@@ -620,17 +624,8 @@ class StationStore extends ChangeNotifier {
         return true;
       }
     } catch (_) {
-      // Local fallback simulation so user can test reservations
-      userReservations.add({
-        'id': DateTime.now().millisecondsSinceEpoch,
-        'station_id': stationId,
-        'connector_id': connectorId,
-        'start_time': startTime.toIso8601String(),
-        'duration_minutes': durationMinutes,
-        'status': 'CONFIRMED',
-      });
-      notifyListeners();
-      return true;
+      // Reservations are server-backed. Never report a local reservation as confirmed.
+      return false;
     }
     return false;
   }
@@ -2913,6 +2908,13 @@ class DetailsScreen extends StatelessWidget {
                     SnackBar(
                       content: Text('Reservation confirmed at ${station['name']} for $duration mins!'),
                       backgroundColor: kPrimaryGreen,
+                    ),
+                  );
+                } else {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Reservation could not be created. Sign in and check connector availability.'),
+                      backgroundColor: Colors.red,
                     ),
                   );
                 }

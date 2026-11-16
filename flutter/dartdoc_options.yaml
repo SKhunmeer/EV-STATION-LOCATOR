@@ -39,4 +39,4 @@ dartdoc:
     - unresolved-doc-reference
     ## Ignores that are elevated to errors:
     # - type-as-html # broken, https://github.com/dart-lang/dartdoc/issues/3545
-    - missing-constant-constructor
+    - missing-constant-constructon 

@@ -1,8 +1,12 @@
 require 'socket'
 require 'cgi'
 
-root = File.expand_path(__dir__)
-server = TCPServer.new('127.0.0.1', 8080)
+# Serve the current Flutter release output by default. The old manual_build
+# directory is retained as an explicit fallback for artifact comparison.
+default_root = File.expand_path('../build/web', __dir__)
+root = File.expand_path(ENV.fetch('PREVIEW_ROOT', default_root))
+port = Integer(ENV.fetch('PREVIEW_PORT', '8080'))
+server = TCPServer.new('127.0.0.1', port)
 mime = {
   '.html' => 'text/html; charset=utf-8',
   '.js' => 'application/javascript; charset=utf-8',
